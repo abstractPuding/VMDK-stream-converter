@@ -35,13 +35,16 @@ import os
 import math
 import string
 import zlib
+import logging
 
 class VMDKStreamException(Exception):
     def __init__(self, msg):
         self.msg = msg
     def __str__(self):
         return self.msg
-
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)-8s [%(funcName)s:%(lineno)d] %(message)s',
+                    )
 # Header Constants
 MAGIC_NUMBER = 0x564D444B # 'V' 'M' 'D' 'K'
 
@@ -167,37 +170,35 @@ def write_grain_table(outfile, grain_table, gtes_per_gt = 512):
         outfile.write(struct.pack("%dI" % gtes_per_gt, *grain_table))
         return table_location
 
-def debug_print(message):
-    #print message
-    pass
 
 def convert_to_stream(infilename, outfilename):
-    debug_print("DEBUG: opening %s to write to %s" % (infilename, outfilename))
+         
+    logging.info("Opening %s to write to %s" % (infilename, outfilename))
 
     infileSize = os.path.getsize(infilename)
     infileSectors = divro(infileSize, 512)
-    debug_print("DEBUG: input file is (%s) bytes - (%s) sectors long" % (infileSize, infileSectors))
+    logging.info("Input file is (%s) bytes - (%s) sectors long" % (infileSize, infileSectors))
 
     # Fixed by convention
     # TODO: Make variable here and in header fuction
     grainSectors=128
     totalGrains=divro(infileSectors, grainSectors)
-    debug_print("DEBUG: total grains will be (%s)" % (totalGrains))
+    logging.info("Total grains will be (%s)" % (totalGrains))
 
     # Fixed by convention
     # TODO: Make variable here and in header fuction
     numGTEsPerGT = 512
     totalGrainTables=divro(totalGrains, numGTEsPerGT)
-    debug_print("DEBUG: total Grain Tables needed will be (%s)" % (totalGrainTables))
+    logging.info("Total Grain Tables needed will be (%s)", totalGrainTables)
 
     grainDirectorySectors=divro(totalGrainTables*4, SECTOR_SIZE)
-    debug_print("DEBUG: sectors in Grain Directory will be (%s)" % (grainDirectorySectors))
+    logging.info("Sectors in Grain Directory will be (%s)" , grainDirectorySectors)
 
     grainDirectoryEntries=grainDirectorySectors*128
-    debug_print("DEBUG: Number of entries in Grain Directory - (%s)" % (grainDirectoryEntries))
+    logging.info("Number of entries in Grain Directory - (%s)", grainDirectoryEntries)
 
     infileCylinders=divro(infileSectors, (63*255))
-    debug_print("DEBUG: Cylinders (%s)" % infileCylinders)
+    logging.info("Cylinders (%s)", infileCylinders)
 
     # Populate descriptor
     tmpl = image_descriptor_template
@@ -206,7 +207,7 @@ def convert_to_stream(infilename, outfilename):
     image_descriptor = tmpl
 
     image_descriptor_pad, desc_sectors = pad_to_sector(len(image_descriptor))
-    debug_print("DEBUG: Descriptor takes up (%s) sectors" % desc_sectors)
+    logging.info("Descriptor takes up (%s) sectors" % desc_sectors)
     image_descriptor += image_descriptor_pad
 
     image_header = create_sparse_header(inFileSectors = infileSectors,
@@ -276,14 +277,14 @@ def convert_to_stream(infilename, outfilename):
     finally:
         # Write out the final grain table if needed
         if len(currentGrainTable):
-            debug_print("Partial grain table present - padding and adding it to dir")
+            logging.info("Partial grain table present - padding and adding it to dir")
             for i in range(numGTEsPerGT-len(currentGrainTable)):
                 currentGrainTable.append(0)
             table_location = write_grain_table(outfile, currentGrainTable,
                                                gtes_per_gt = numGTEsPerGT)
             grainDirectory.append(table_location)
         else:
-            debug_print("Current grain table is empty so we need not write it out")
+            logging.info("Current grain table is empty so we need not write it out")
 
         # pad out grain directory then write it
         for i in range(grainDirectoryEntries - totalGrainTables):
@@ -293,9 +294,9 @@ def convert_to_stream(infilename, outfilename):
         outfile.write(grain_directory_marker)
         gdLocation = sector_pointer(outfile)
         grainDirectoryStruct = "%dI" % grainDirectoryEntries
-        debug_print("Grain directory length (%d)" % (len(grainDirectory)))
-        debug_print("Grain directory: ")
-        debug_print(grainDirectory)
+        logging.info("Grain directory length (%d)" , len(grainDirectory))
+        logging.debug("Grain directory: ")
+        logging.debug(grainDirectory)
         outfile.write(struct.pack(grainDirectoryStruct, *grainDirectory))
 
         # footer marker
@@ -311,6 +312,13 @@ def convert_to_stream(infilename, outfilename):
         outfile.write(create_marker(0, 0, MARKER_EOS))
         outfile.close()
         infile.close()
+        logging.info("Vmdk file is ready @ %s",  outfilename)
 
 if __name__ == '__main__':
-    convert_to_stream(sys.argv[1], sys.argv[2])
+    if len(sys.argv) <3:
+        print('USAGE: VMDKstream.py <RAW_FILE_PATH> <VMDK_FILE_PATH>')
+        sys.exit(1)
+    raw_file_path, vmdk_file_path =  sys.argv[1], sys.argv[2]
+    assert os.path.exists(raw_file_path),"rawfile  %s does not exist " % raw_file_path
+    assert os.path.exists(os.path.dirname(vmdk_file_path)),"vmdk  %s does not exist " % vmdk_file_path
+    convert_to_stream(raw_file_path, vmdk_file_path)
